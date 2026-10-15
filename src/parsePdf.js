@@ -54,8 +54,11 @@ async function parsePdfBuffer(buffer, filename) {
   }
 
   const samples = [];
+  // Supporting samples (Father/Mother/Normal) carry a role suffix on the hash,
+  // e.g. "79b0485329b413e1:R" — without the optional suffix here they fall out
+  // of the sample table entirely.
   const sampleRe =
-    /(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})([0-9a-f]{16})(\d+)(Genome|Exome|Panel|Supporting)/g;
+    /(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})([0-9a-f]{16}(?::[A-Za-z])?)(\d+)(Genome|Exome|Panel|Supporting)/g;
   let sm;
   while ((sm = sampleRe.exec(text))) {
     const [, date, hash, variantCount, size] = sm;
@@ -63,6 +66,23 @@ async function parsePdfBuffer(buffer, filename) {
   }
 
   const reportDate = parsePdfDate(data.info && data.info.CreationDate) || parseFilenameDate(filename);
+
+  // The headline "Tokens Consumed" is all-time, but the category table is
+  // scoped to a window ("Last 30 Days") — they only reconcile once we know it.
+  // Golden Helix puts the exact range in the download filename; otherwise fall
+  // back to counting back from the report date.
+  const range = /start_date_(\d{4}-\d{2}-\d{2})_end_date_(\d{4}-\d{2}-\d{2})/.exec(filename || '');
+  const daysMatch = /Last (\d+) Days/.exec(text);
+  const windowDays = daysMatch ? parseNumber(daysMatch[1]) : null;
+  let windowStart = range ? range[1] : null;
+  let windowEnd = range ? range[2] : null;
+  if (!windowStart && windowDays != null && reportDate) {
+    const end = new Date(reportDate);
+    const start = new Date(end);
+    start.setUTCDate(start.getUTCDate() - windowDays);
+    windowStart = start.toISOString().slice(0, 10);
+    windowEnd = end.toISOString().slice(0, 10);
+  }
 
   return {
     filename,
@@ -76,6 +96,9 @@ async function parsePdfBuffer(buffer, filename) {
     usagePercent,
     categories,
     samples,
+    windowDays,
+    windowStart,
+    windowEnd,
   };
 }
 

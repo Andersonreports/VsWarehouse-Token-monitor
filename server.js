@@ -1,12 +1,44 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const express = require('express');
 const chokidar = require('chokidar');
 const multer = require('multer');
 
+function lanAddresses() {
+  const nets = os.networkInterfaces();
+  const addrs = [];
+  for (const ifaceList of Object.values(nets)) {
+    for (const iface of ifaceList || []) {
+      if (iface.family === 'IPv4' && !iface.internal) addrs.push(iface.address);
+    }
+  }
+  return addrs;
+}
+
 const { parsePdfBuffer } = require('./src/parsePdf');
-const { loadHistory, upsertReport, groupByOrg } = require('./src/store');
+const { loadHistory, upsertReport, deleteReport, groupByOrg } = require('./src/store');
 const { streamReportPdf } = require('./src/generateReport');
+const { getSheetReports } = require('./src/parseSheet');
+const { reconcile } = require('./src/reconcile');
+
+// Each module pairs one license (PDF reports) with one live Google Sheet (Excel report).
+const MODULES = {
+  cmc: {
+    label: 'Anderson CMC System',
+    orgName: 'Anderson Diagnostics & Labs (Shivasanmuganatha)',
+    sheetId: '1Qd_wFFydbtwOhpcx8flnHGAiTQ4z--bDmOUlX8TTVUQ',
+    // Header row's "Pending tokens (N)" label has been getting overwritten in
+    // this sheet; used only if the header itself can't tell us the total.
+    sheetTokensTotalFallback: 6000,
+  },
+  ngs: {
+    label: 'NGS Server System',
+    orgName: 'Anderson Diagnostics & Labs (Honguntikar)',
+    sheetId: '1Ncd7T2ajE2WafSFO82anQJiHsdot3HKPEpAU_yF0zmk',
+    sheetTokensTotalFallback: 6000,
+  },
+};
 
 const REPORTS_DIR = path.join(__dirname, 'reports');
 const PORT = process.env.PORT || 4173;
@@ -53,7 +85,13 @@ const upload = multer({
 });
 
 const app = express();
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(
+  express.static(path.join(__dirname, 'public'), {
+    etag: false,
+    lastModified: false,
+    setHeaders: (res) => res.setHeader('Cache-Control', 'no-store'),
+  })
+);
 
 // License keys are used server-side only for grouping and must never reach the client.
 function sanitizeOrgs(orgs) {
@@ -66,6 +104,14 @@ function sanitizeOrgs(orgs) {
 
 app.get('/api/orgs', (req, res) => {
   res.json(sanitizeOrgs(groupByOrg(loadHistory())));
+});
+
+app.get('/api/orgs/:moduleId', (req, res) => {
+  const mod = MODULES[req.params.moduleId];
+  if (!mod) return res.status(404).json({ error: 'Unknown module.' });
+  const org = sanitizeOrgs(groupByOrg(loadHistory())).find((o) => o.label === mod.label);
+  if (!org) return res.status(404).json({ error: 'No PDF reports ingested for this module yet.' });
+  res.json(org);
 });
 
 app.post('/api/rescan', async (req, res) => {
@@ -81,6 +127,59 @@ app.post('/api/upload', (req, res) => {
     await ingestFile(req.file.path);
     res.json(sanitizeOrgs(groupByOrg(loadHistory())));
   });
+});
+
+app.delete('/api/reports/:filename', (req, res) => {
+  const filename = req.params.filename;
+  const filePath = path.join(REPORTS_DIR, filename);
+  if (path.dirname(filePath) !== REPORTS_DIR) {
+    return res.status(400).json({ error: 'Invalid filename.' });
+  }
+
+  const removed = deleteReport(filename);
+  if (!removed) return res.status(404).json({ error: 'No such report in history.' });
+
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  res.json(sanitizeOrgs(groupByOrg(loadHistory())));
+});
+
+app.get('/api/modules', (req, res) => {
+  res.json(
+    Object.entries(MODULES).map(([id, m]) => ({
+      id,
+      label: m.label,
+      sheetUrl: `https://docs.google.com/spreadsheets/d/${m.sheetId}/edit?usp=sharing`,
+    }))
+  );
+});
+
+app.get('/api/sheet/:moduleId', async (req, res) => {
+  const mod = MODULES[req.params.moduleId];
+  if (!mod) return res.status(404).json({ error: 'Unknown module.' });
+
+  try {
+    const { reports, rawRows, headerIssue, dateWarnings } = await getSheetReports(mod.sheetId, {
+      orgName: mod.orgName,
+      fallbackTotal: mod.sheetTokensTotalFallback,
+    });
+    const org = sanitizeOrgs(groupByOrg(loadHistory())).find((o) => o.label === mod.label);
+    // Reconcile the log against the most recent PDF, which is the license meter.
+    const latestPdf = org && org.reports.length ? org.reports[org.reports.length - 1] : null;
+    res.json({
+      label: mod.label,
+      license: org?.license || null,
+      reports,
+      rawRows,
+      headerIssue: headerIssue || null,
+      dateWarnings: dateWarnings || [],
+      reconciliation: latestPdf ? reconcile(latestPdf, rawRows) : null,
+      meterSource: latestPdf
+        ? { filename: latestPdf.filename, reportDate: latestPdf.reportDate }
+        : null,
+    });
+  } catch (err) {
+    res.status(502).json({ error: `Failed to load live sheet: ${err.message}` });
+  }
 });
 
 app.get('/api/report', (req, res) => {
@@ -114,8 +213,11 @@ app.get('/api/report', (req, res) => {
   streamReportPdf(res, selected, { scopeLabel });
 });
 
-app.listen(PORT, async () => {
+app.listen(PORT, '0.0.0.0', async () => {
   console.log(`Token monitor running at http://localhost:${PORT}`);
+  for (const addr of lanAddresses()) {
+    console.log(`  also on your LAN at http://${addr}:${PORT}`);
+  }
   await scanReportsDir();
 
   chokidar

@@ -1,3 +1,6 @@
+const params = new URLSearchParams(location.search);
+const MODULE_ID = params.get('m');
+
 const CAT_ORDER = [
   { key: 'GENOME', label: 'Genome', varName: '--series-1' },
   { key: 'EXOME', label: 'Exome', varName: '--series-2' },
@@ -5,7 +8,7 @@ const CAT_ORDER = [
   { key: 'SUPPORTING', label: 'Supporting', varName: '--series-4' },
 ];
 
-const fmtInt = (n) => (n == null ? '—' : n.toLocaleString('en-US'));
+const fmtInt = (n) => (n == null || n === '' ? '—' : n.toLocaleString ? n.toLocaleString('en-US') : n);
 const fmtPct = (n) => (n == null ? '—' : `${n}%`);
 
 function fmtDate(iso, opts) {
@@ -31,14 +34,33 @@ function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-async function fetchOrgs() {
-  const res = await fetch('/api/orgs');
-  return res.json();
-}
-
-let selectedOrgLabel = null;
+let moduleMeta = null;
+let activeSource = 'pdf';
 let currentOrgData = null;
 let selectedMonth = 'all';
+
+async function loadModuleMeta() {
+  const res = await fetch('/api/modules');
+  const modules = await res.json();
+  const mod = modules.find((m) => m.id === MODULE_ID);
+  if (!mod) throw new Error(`Unknown module "${MODULE_ID}"`);
+  return mod;
+}
+
+async function fetchPdfOrg() {
+  const res = await fetch(`/api/orgs/${MODULE_ID}`);
+  const body = await res.json();
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+  return body;
+}
+
+async function fetchExcelOrg() {
+  const res = await fetch(`/api/sheet/${MODULE_ID}`);
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+  return body;
+}
 
 function monthKey(iso) {
   const d = new Date(iso);
@@ -66,7 +88,16 @@ function renderHistoryViews() {
   const filtered =
     selectedMonth === 'all' ? sorted : sorted.filter((r) => monthKey(r.reportDate) === selectedMonth);
   renderTrend(filtered);
-  renderReportsTable(filtered);
+
+  if (activeSource === 'excel') {
+    const rows = currentOrgData.rawRows || [];
+    const filteredRows =
+      selectedMonth === 'all' ? rows : rows.filter((r) => monthKey(r.sortDate) === selectedMonth);
+    renderReportsTableSheet(filteredRows);
+    renderUserTrend(filteredRows);
+  } else {
+    renderReportsTablePdf(filtered);
+  }
 }
 
 document.getElementById('month-filter').addEventListener('change', (e) => {
@@ -74,51 +105,23 @@ document.getElementById('month-filter').addEventListener('change', (e) => {
   renderHistoryViews();
 });
 
-function renderTabs(orgs) {
-  const tabBar = document.getElementById('org-tabs');
-  tabBar.innerHTML = '';
-  tabBar.hidden = orgs.length < 2;
-  for (const org of orgs) {
-    const btn = document.createElement('button');
-    btn.className = 'org-tab' + (org.label === selectedOrgLabel ? ' active' : '');
-    btn.textContent = org.label;
-    btn.addEventListener('click', () => {
-      selectedOrgLabel = org.label;
-      localStorage.setItem('token-monitor-org', org.label);
-      renderOrg(org);
-      renderTabs(orgs);
-    });
-    tabBar.appendChild(btn);
-  }
-}
-
-function renderHeader(orgLabel, latest) {
-  document.getElementById('org-name').textContent = orgLabel || 'VSWarehouse license';
-
-  const badge = document.getElementById('tier-badge');
-  badge.hidden = false;
-  if (latest.withinTier) {
-    badge.className = 'badge good';
-    badge.innerHTML =
-      '<svg viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Within usage tier';
-  } else {
-    badge.className = 'badge critical';
-    badge.innerHTML =
-      '<svg viewBox="0 0 16 16" fill="none"><path d="M8 4v5M8 11.5h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Over usage tier';
-  }
+function renderHeader(latest, source) {
+  const orgNameEl = document.getElementById('org-name');
+  orgNameEl.textContent =
+    source === 'excel' ? 'Live from Google Sheet' : latest.orgName || moduleMeta.label;
 }
 
 function renderDelta(elId, delta, { goodDirection } = {}) {
   const el = document.getElementById(elId);
   if (delta == null || delta === 0) {
-    el.textContent = delta === 0 ? 'No change since last report' : '';
+    el.textContent = delta === 0 ? 'No change since last entry' : '';
     el.className = 'stat-delta flat';
     return;
   }
   const arrow = delta > 0 ? '▲' : '▼';
   const sign = delta > 0 ? '+' : '';
   const isGood = goodDirection === (delta > 0 ? 'up' : 'down');
-  el.textContent = `${arrow} ${sign}${fmtInt(delta)} since last report`;
+  el.textContent = `${arrow} ${sign}${fmtInt(delta)} since last entry`;
   el.className = `stat-delta ${isGood ? 'down' : 'up'}`;
 }
 
@@ -148,6 +151,19 @@ function renderStats(latest, prev) {
   meterFill.classList.toggle('warn', pct >= 80);
 }
 
+function renderLicenseStat(license) {
+  const daysEl = document.getElementById('stat-days-remaining');
+  const expiryEl = document.getElementById('stat-license-expiry');
+  if (!license) {
+    daysEl.textContent = '—';
+    expiryEl.textContent = '—';
+    return;
+  }
+  const daysLeft = Math.round((new Date(license.expiryDate) - Date.now()) / 86400000);
+  daysEl.textContent = `~${Math.max(0, daysLeft).toLocaleString('en-US')}`;
+  expiryEl.textContent = fmtDate(license.expiryDate);
+}
+
 function renderLicenseValidity(license) {
   if (!license) return '';
   const expiry = new Date(license.expiryDate);
@@ -171,7 +187,7 @@ function renderBurnRate(reports, license) {
 
   if (reports.length < 2) {
     el.innerHTML = `<div class="burn-empty">
-      <span>Only one report ingested so far. Add another report for this org and the burn rate, days remaining, and a projected exhaustion date will appear here automatically.</span>
+      <span>Only one entry so far. Add another report/row and the burn rate, days remaining, and a projected exhaustion date will appear here automatically.</span>
     </div>${licenseHtml ? `<div class="burn-grid">${licenseHtml}</div>` : ''}`;
     return;
   }
@@ -182,7 +198,7 @@ function renderBurnRate(reports, license) {
   const deltaDays = (new Date(latest.reportDate) - new Date(prev.reportDate)) / 86400000;
 
   if (deltaDays <= 0) {
-    el.innerHTML = `<div class="burn-empty"><span>Reports must be at least a day apart to estimate a burn rate.</span></div>${
+    el.innerHTML = `<div class="burn-empty"><span>Entries must be at least a day apart to estimate a burn rate.</span></div>${
       licenseHtml ? `<div class="burn-grid">${licenseHtml}</div>` : ''
     }`;
     return;
@@ -206,7 +222,7 @@ function renderBurnRate(reports, license) {
   el.innerHTML = `
     <div class="burn-grid">
       <div class="burn-metric ${availDelta < 0 ? 'warn' : 'good'}">
-        <div class="bm-label">Since last report</div>
+        <div class="bm-label">Since last entry</div>
         <div class="bm-value">${availArrow} ${availSign}${fmtInt(availDelta)}</div>
       </div>
       <div class="burn-metric">
@@ -217,7 +233,7 @@ function renderBurnRate(reports, license) {
     </div>
     <div class="burn-note">Based on ${fmtInt(deltaTokens)} tokens consumed over ${deltaDays.toFixed(
     1
-  )} days, between the ${fmtDate(prev.reportDate)} and ${fmtDate(latest.reportDate)} reports.</div>
+  )} days, between the ${fmtDate(prev.reportDate)} and ${fmtDate(latest.reportDate)} entries.</div>
   `;
 }
 
@@ -231,8 +247,8 @@ function renderTrend(history) {
 
   sub.textContent =
     history.length === 1
-      ? 'Only one report ingested so far — add more to see a trend.'
-      : `${history.length} reports, ${fmtDate(history[0].reportDate)} → ${fmtDate(
+      ? 'Only one entry so far — add more to see a trend.'
+      : `${history.length} entries, ${fmtDate(history[0].reportDate)} → ${fmtDate(
           history[history.length - 1].reportDate
         )}`;
 
@@ -266,14 +282,13 @@ function renderTrend(history) {
 
   const defs = el('defs', {});
   const gradient = el('linearGradient', { id: 'trend-gradient', x1: 0, y1: 0, x2: 0, y2: 1 });
-  const stop1 = el('stop', { offset: '0%', 'stop-color': cssVar('--series-1'), 'stop-opacity': 0.28 });
-  const stop2 = el('stop', { offset: '100%', 'stop-color': cssVar('--series-1'), 'stop-opacity': 0.02 });
+  const stop1 = el('stop', { offset: '0%', 'stop-color': cssVar('--accent'), 'stop-opacity': 0.28 });
+  const stop2 = el('stop', { offset: '100%', 'stop-color': cssVar('--accent'), 'stop-opacity': 0.02 });
   gradient.appendChild(stop1);
   gradient.appendChild(stop2);
   defs.appendChild(gradient);
   svg.appendChild(defs);
 
-  // gridlines + y labels
   const steps = 4;
   for (let s = 0; s <= steps; s++) {
     const v = (maxVal / steps) * s;
@@ -284,16 +299,12 @@ function renderTrend(history) {
     svg.appendChild(label);
   }
 
-  // reference line at latest total (capacity)
   const refY = yFor(latestTotal);
-  svg.appendChild(
-    el('line', { class: 'ref-line', x1: padL, x2: W - padR, y1: refY, y2: refY })
-  );
+  svg.appendChild(el('line', { class: 'ref-line', x1: padL, x2: W - padR, y1: refY, y2: refY }));
   const refLabel = el('text', { class: 'ref-label', x: W - padR, y: refY - 5, 'text-anchor': 'end' });
   refLabel.textContent = `Total: ${latestTotal.toLocaleString('en-US')}`;
   svg.appendChild(refLabel);
 
-  // points
   const pts = history.map((h, i) => ({
     x: xFor(new Date(h.reportDate).getTime(), i),
     y: yFor(h.tokensConsumed || 0),
@@ -307,7 +318,6 @@ function renderTrend(history) {
     svg.appendChild(el('path', { class: 'trend-line', d: linePath }));
   }
 
-  // x-axis date labels (thin out if many, and never let two labels overlap)
   const labelEvery = Math.max(1, Math.ceil(pts.length / 8));
   const minLabelGap = 46;
   const candidates = pts
@@ -344,13 +354,7 @@ function renderTrend(history) {
     const dot = el('circle', { class: 'trend-dot', cx: p.x, cy: p.y, r: 4 });
     svg.appendChild(dot);
 
-    const hit = el('circle', {
-      cx: p.x,
-      cy: p.y,
-      r: 12,
-      fill: 'transparent',
-      style: 'cursor:pointer',
-    });
+    const hit = el('circle', { cx: p.x, cy: p.y, r: 12, fill: 'transparent', style: 'cursor:pointer' });
     hit.addEventListener('mouseenter', () => {
       dot.setAttribute('r', 6);
       const wrapRect = svg.parentElement.getBoundingClientRect();
@@ -369,6 +373,138 @@ function renderTrend(history) {
     });
     svg.appendChild(hit);
   });
+}
+
+const USER_TREND_COLORS = ['--series-1', '--series-2', '--series-3', '--series-4', '--seq-300', '--seq-600'];
+
+function renderUserTrend(rawRows) {
+  const svg = document.getElementById('user-trend-svg');
+  const tooltip = document.getElementById('user-trend-tooltip');
+  const sub = document.getElementById('user-trend-sub');
+  const legend = document.getElementById('user-trend-legend');
+  svg.innerHTML = '';
+  legend.innerHTML = '';
+
+  const byUser = new Map();
+  for (const r of rawRows) {
+    const user = (r.username || '').trim();
+    if (!user) continue;
+    if (!byUser.has(user)) byUser.set(user, []);
+    byUser.get(user).push(r);
+  }
+
+  const usernames = [...byUser.keys()].sort();
+  if (usernames.length === 0) {
+    sub.textContent = 'No usage logged yet.';
+    return;
+  }
+
+  const series = usernames.map((user, i) => {
+    const rows = [...byUser.get(user)].sort((a, b) => new Date(a.sortDate) - new Date(b.sortDate));
+    let cumulative = 0;
+    const points = rows.map((r) => {
+      cumulative += Number(r.tokensConsumed) || 0;
+      return { x: new Date(r.sortDate).getTime(), y: cumulative, row: r };
+    });
+    return { user, color: USER_TREND_COLORS[i % USER_TREND_COLORS.length], points };
+  });
+
+  const totalTokens = series.reduce((s, ser) => s + (ser.points[ser.points.length - 1]?.y || 0), 0);
+  sub.textContent = `${usernames.length} user${usernames.length === 1 ? '' : 's'} · ${fmtInt(totalTokens)} tokens total`;
+
+  for (const ser of series) {
+    const item = document.createElement('div');
+    item.className = 'item';
+    const last = ser.points[ser.points.length - 1];
+    item.innerHTML = `<span class="swatch" style="background:${cssVar(ser.color)}"></span>${ser.user} (${fmtInt(
+      last.y
+    )})`;
+    legend.appendChild(item);
+  }
+
+  const allPoints = series.flatMap((s) => s.points);
+  const W = 900,
+    H = 220,
+    padL = 46,
+    padR = 16,
+    padT = 16,
+    padB = 28;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const maxVal = Math.max(1, ...allPoints.map((p) => p.y));
+  const minT = Math.min(...allPoints.map((p) => p.x));
+  const maxT = Math.max(...allPoints.map((p) => p.x));
+  const spanT = maxT - minT || 1;
+
+  const xFor = (t) => (allPoints.length <= 1 ? padL + innerW / 2 : padL + ((t - minT) / spanT) * innerW);
+  const yFor = (v) => padT + innerH - (v / maxVal) * innerH;
+
+  const ns = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs) => {
+    const n = document.createElementNS(ns, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    return n;
+  };
+
+  const steps = 4;
+  for (let s = 0; s <= steps; s++) {
+    const v = (maxVal / steps) * s;
+    const y = yFor(v);
+    svg.appendChild(el('line', { class: 'grid-line', x1: padL, x2: W - padR, y1: y, y2: y }));
+    const label = el('text', { class: 'axis-label', x: padL - 8, y: y + 3, 'text-anchor': 'end' });
+    label.textContent = Math.round(v).toLocaleString('en-US');
+    svg.appendChild(label);
+  }
+
+  const dateLabels = [...new Set(allPoints.map((p) => p.x))].sort((a, b) => a - b);
+  const labelEvery = Math.max(1, Math.ceil(dateLabels.length / 6));
+  dateLabels.forEach((t, i) => {
+    if (i % labelEvery !== 0 && i !== dateLabels.length - 1) return;
+    const x = xFor(t);
+    const label = el('text', {
+      class: 'axis-label',
+      x,
+      y: H - 6,
+      'text-anchor': i === 0 ? 'start' : i === dateLabels.length - 1 ? 'end' : 'middle',
+    });
+    label.textContent = fmtDate(new Date(t).toISOString(), { month: 'short', day: 'numeric' });
+    svg.appendChild(label);
+  });
+
+  for (const ser of series) {
+    const color = cssVar(ser.color);
+    const pts = ser.points.map((p) => ({ ...p, sx: xFor(p.x), sy: yFor(p.y) }));
+
+    if (pts.length > 1) {
+      const linePath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.sx},${p.sy}`).join(' ');
+      svg.appendChild(el('path', { d: linePath, fill: 'none', stroke: color, 'stroke-width': 2.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+    }
+
+    pts.forEach((p) => {
+      const dot = el('circle', { cx: p.sx, cy: p.sy, r: 4, fill: cssVar('--surface'), stroke: color, 'stroke-width': 2.5 });
+      svg.appendChild(dot);
+
+      const hit = el('circle', { cx: p.sx, cy: p.sy, r: 12, fill: 'transparent', style: 'cursor:pointer' });
+      hit.addEventListener('mouseenter', () => {
+        dot.setAttribute('r', 6);
+        const wrapRect = svg.parentElement.getBoundingClientRect();
+        const scaleX = wrapRect.width / W;
+        const scaleY = wrapRect.height / H;
+        tooltip.innerHTML = `<div class="t-title">${ser.user}</div>
+          <div class="t-row">${fmtDate(p.row.sortDate)}: ${fmtInt(Number(p.row.tokensConsumed) || 0)} tokens</div>
+          <div class="t-row">Cumulative: ${fmtInt(p.y)}</div>`;
+        tooltip.style.left = `${p.sx * scaleX + 12}px`;
+        tooltip.style.top = `${p.sy * scaleY - 8}px`;
+        tooltip.style.opacity = '1';
+      });
+      hit.addEventListener('mouseleave', () => {
+        dot.setAttribute('r', 4);
+        tooltip.style.opacity = '0';
+      });
+      svg.appendChild(hit);
+    });
+  }
 }
 
 function renderCategories(latest) {
@@ -457,7 +593,7 @@ function renderSamplesByDay(latest) {
 
   const data = computeSamplesByDay(latest.samples || []);
   if (data.length === 0) {
-    sub.textContent = 'No samples in this report.';
+    sub.textContent = 'No samples logged yet.';
     return;
   }
   const totalSamples = (latest.samples || []).length;
@@ -557,7 +693,7 @@ function renderSamples(latest) {
   tbody.innerHTML = '';
   const samples = [...(latest.samples || [])].sort((a, b) => new Date(b.date) - new Date(a.date));
   if (samples.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted)">No samples in this report.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted)">No samples logged yet.</td></tr>';
     return;
   }
   for (const s of samples) {
@@ -569,29 +705,131 @@ function renderSamples(latest) {
   }
 }
 
-function renderReportsTable(history) {
+function setReportsTableHead(mode, tokensTotal) {
+  const thead = document.getElementById('reports-table-head');
+  if (mode === 'excel') {
+    thead.innerHTML = `<tr>
+      <th>Date</th><th>Time</th><th>Server</th><th>Workspace</th><th>Panel</th>
+      <th>Total sample count</th><th>Total token consumed</th><th>Username</th><th>Uploaded by</th>
+      <th>Pending tokens (${fmtInt(tokensTotal)})</th>
+    </tr>`;
+  } else {
+    thead.innerHTML = `<tr><th>Report Date</th><th>File</th><th>Consumed</th><th>Total</th><th>Available</th><th>Usage</th><th></th></tr>`;
+  }
+}
+
+function renderReportsTablePdf(history) {
   const tbody = document.querySelector('#reports-table tbody');
   tbody.innerHTML = '';
   const rows = [...history].sort((a, b) => new Date(b.reportDate) - new Date(a.reportDate));
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="color:var(--text-muted)">No reports ingested yet.</td></tr>';
+    return;
+  }
   for (const r of rows) {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${fmtDate(r.reportDate)}</td><td class="mono">${r.filename}</td><td>${fmtInt(
       r.tokensConsumed
     )}</td><td>${fmtInt(r.tokensTotal)}</td><td>${fmtInt(r.tokensAvailable)}</td><td>${fmtPct(
       r.usagePercent
-    )}</td>`;
+    )}</td><td><button class="row-delete-btn" data-filename="${encodeURIComponent(
+      r.filename
+    )}" title="Remove this report">Remove</button></td>`;
     tbody.appendChild(tr);
   }
 }
 
-function renderOrg(org) {
+document.querySelector('#reports-table tbody').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.row-delete-btn');
+  if (!btn) return;
+  const filename = decodeURIComponent(btn.dataset.filename);
+  if (!confirm(`Remove "${filename}" from history?\n\nThis deletes the uploaded PDF and cannot be undone.`)) return;
+
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/reports/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `Delete failed (${res.status})`);
+    showUploadStatus('success', `Removed ${filename}.`);
+    await refresh();
+  } catch (err) {
+    showUploadStatus('error', `Failed to remove ${filename}: ${err.message}`);
+    btn.disabled = false;
+  }
+});
+
+function renderReportsTableSheet(rawRows) {
+  const tbody = document.querySelector('#reports-table tbody');
+  tbody.innerHTML = '';
+  const rows = [...rawRows].sort((a, b) => new Date(b.sortDate) - new Date(a.sortDate));
+  if (rows.length === 0) {
+    tbody.innerHTML =
+      '<tr><td colspan="10" style="color:var(--text-muted)">No entries logged yet.</td></tr>';
+    return;
+  }
+  const cell = (v) => (v == null || v === '' ? '—' : v);
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${cell(r.date)}</td><td>${cell(r.time)}</td><td>${cell(
+      r.server
+    )}</td><td>${cell(r.workspace)}</td><td>${cell(r.panel)}</td><td>${cell(
+      r.sampleCount
+    )}</td><td>${cell(r.tokensConsumed)}</td><td>${cell(r.username)}</td><td>${cell(
+      r.uploadedBy
+    )}</td><td>${cell(r.pending)}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function showEmptyDashboard(message) {
+  ['stat-total', 'stat-consumed', 'stat-available', 'stat-usage'].forEach(
+    (id) => (document.getElementById(id).textContent = '—')
+  );
+  document.getElementById('stat-consumed-delta').textContent = '';
+  document.getElementById('stat-available-sub').textContent = '';
+  document.getElementById('stat-usage-sub').textContent = '';
+  document.getElementById('burn-content').innerHTML = `<div class="burn-empty"><span>${message}</span></div>`;
+  document.getElementById('trend-svg').innerHTML = '';
+  document.getElementById('trend-sub').textContent = message;
+  document.getElementById('user-trend-svg').innerHTML = '';
+  document.getElementById('user-trend-sub').textContent = message;
+  document.getElementById('user-trend-legend').innerHTML = '';
+  renderLicenseStat(null);
+  document.getElementById('mini-stats').innerHTML = '';
+  document.getElementById('cat-legend').innerHTML = '';
+  document.getElementById('cat-bars').innerHTML = '';
+  document.getElementById('category-sub').textContent = '';
+  document.getElementById('day-svg').innerHTML = '';
+  document.getElementById('day-legend').innerHTML = '';
+  document.getElementById('day-sub').textContent = '';
+  document.querySelector('#samples-table tbody').innerHTML = `<tr><td colspan="4" style="color:var(--text-muted)">${message}</td></tr>`;
+  const colspan = activeSource === 'excel' ? 11 : 7;
+  document.querySelector('#reports-table tbody').innerHTML = `<tr><td colspan="${colspan}" style="color:var(--text-muted)">${message}</td></tr>`;
+  document.getElementById('month-filter').innerHTML = '<option value="all">All time</option>';
+}
+
+function renderOrg(org, source) {
   currentOrgData = org;
-  const sorted = org.reports; // already sorted ascending by server
+  setReportsTableHead(source, org.reports[org.reports.length - 1]?.tokensTotal);
+
+  const sorted = org.reports;
+  if (sorted.length === 0) {
+    document.getElementById('org-name').textContent =
+      source === 'excel' ? 'Live from Google Sheet' : moduleMeta.label;
+    showEmptyDashboard(
+      source === 'excel'
+        ? 'No entries logged in the sheet yet.'
+        : 'No PDF reports ingested for this module yet.'
+    );
+    return;
+  }
+
   const latest = sorted[sorted.length - 1];
   const prev = sorted.length > 1 ? sorted[sorted.length - 2] : null;
 
-  renderHeader(org.label, latest);
+  renderHeader(latest, source);
   renderStats(latest, prev);
+  renderLicenseStat(org.license);
   renderBurnRate(sorted, org.license);
   renderCategories(latest);
   renderSamplesByDay(latest);
@@ -601,96 +839,107 @@ function renderOrg(org) {
   renderHistoryViews();
 }
 
-async function refresh() {
-  const orgs = await fetchOrgs();
-  if (orgs.length === 0) {
-    document.getElementById('org-tabs').hidden = true;
-    document.getElementById('org-name').textContent = 'No reports ingested yet';
-    document.getElementById('trend-sub').textContent =
-      'Drop a tokenstatus_*.pdf file into the reports/ folder to get started.';
+// Explains why the sheet log and the licence meter disagree. Only meaningful
+// on the Excel tab, where both sources are in play.
+function renderReconciliation(org, source) {
+  const panel = document.getElementById('reconcile-panel');
+  const rec = source === 'excel' ? org && org.reconciliation : null;
+  const warnings = source === 'excel' && org ? org.dateWarnings || [] : [];
+
+  if (!rec && warnings.length === 0) {
+    panel.hidden = true;
     return;
   }
+  panel.hidden = false;
 
-  renderReportMenu(orgs);
+  const clean = !rec || rec.reconciled;
+  panel.classList.toggle('is-clean', clean && warnings.length === 0);
 
-  const remembered = localStorage.getItem('token-monitor-org');
-  const match = orgs.find((o) => o.label === selectedOrgLabel) || orgs.find((o) => o.label === remembered);
-  const active = match || orgs[0];
-  selectedOrgLabel = active.label;
-
-  renderTabs(orgs);
-  renderOrg(active);
-}
-
-function renderReportMenu(orgs) {
-  const menu = document.getElementById('report-menu');
-  menu.innerHTML = '';
-
-  if (orgs.length === 1) {
-    const btn = document.createElement('button');
-    btn.innerHTML = `<svg viewBox="0 0 16 16" fill="none"><path d="M4 2.5h6l2.5 2.5v8.5H4v-11z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v4.5M8 10.5L6 8.5M8 10.5l2-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Download report</span>`;
-    btn.addEventListener('click', () => {
-      window.location.href = `/api/report?scope=${encodeURIComponent(orgs[0].label)}`;
-      menu.hidden = true;
-    });
-    menu.appendChild(btn);
-    return;
+  const badge = document.getElementById('reconcile-badge');
+  const scope = document.getElementById('reconcile-scope');
+  if (!rec) {
+    badge.textContent = 'Sheet notes';
+    scope.textContent = '';
+  } else {
+    badge.textContent = rec.reconciled
+      ? 'Reconciled with license meter'
+      : 'Unaccounted against license meter';
+    scope.textContent = `${rec.window.start} to ${rec.window.end} · meter ${fmtInt(
+      rec.meter.total.tokens
+    )} tokens / ${fmtInt(rec.meter.total.count)} samples · sheet ${fmtInt(
+      rec.sheet.total.tokens
+    )} / ${fmtInt(rec.sheet.total.count)}`;
   }
 
-  const label = document.createElement('div');
-  label.className = 'dd-label';
-  label.textContent = 'Select organizations';
-  menu.appendChild(label);
-
-  const checkboxes = orgs.map((org) => {
-    const item = document.createElement('label');
-    item.className = 'dd-checkbox';
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.value = org.label;
-    input.checked = true;
-    const text = document.createElement('span');
-    text.textContent = org.label;
-    item.appendChild(input);
-    item.appendChild(text);
-    menu.appendChild(item);
-    return input;
-  });
-
-  const hr = document.createElement('hr');
-  menu.appendChild(hr);
-
-  const downloadBtn = document.createElement('button');
-  downloadBtn.className = 'dd-primary';
-  downloadBtn.innerHTML = `<svg viewBox="0 0 16 16" fill="none"><path d="M4 2.5h6l2.5 2.5v8.5H4v-11z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v4.5M8 10.5L6 8.5M8 10.5l2-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Download report</span>`;
-  const updateDownloadState = () => {
-    downloadBtn.disabled = !checkboxes.some((c) => c.checked);
+  const list = document.getElementById('reconcile-list');
+  list.innerHTML = '';
+  const add = (text, why) => {
+    const li = document.createElement('li');
+    li.textContent = text;
+    if (why) {
+      const span = document.createElement('span');
+      span.className = 'why';
+      span.textContent = why;
+      li.appendChild(span);
+    }
+    list.appendChild(li);
   };
-  checkboxes.forEach((c) => c.addEventListener('change', updateDownloadState));
-  updateDownloadState();
 
-  downloadBtn.addEventListener('click', () => {
-    const selected = checkboxes.filter((c) => c.checked).map((c) => c.value);
-    if (selected.length === 0) return;
-    const params =
-      selected.length === orgs.length
-        ? 'scope=all'
-        : selected.map((label) => `orgs=${encodeURIComponent(label)}`).join('&');
-    window.location.href = `/api/report?${params}`;
-    menu.hidden = true;
-  });
-  menu.appendChild(downloadBtn);
+  if (rec && rec.reconciled) {
+    add('Every sample the meter billed is present in the sheet log.');
+  }
+  for (const f of (rec && rec.findings) || []) add(f.text, f.hint);
+  for (const w of warnings) add(w);
 }
 
-document.getElementById('report-btn').addEventListener('click', (e) => {
-  e.stopPropagation();
-  const menu = document.getElementById('report-menu');
-  menu.hidden = !menu.hidden;
-});
-document.getElementById('report-menu').addEventListener('click', (e) => e.stopPropagation());
-document.addEventListener('click', () => {
-  document.getElementById('report-menu').hidden = true;
-});
+function showFetchError(message, kind = 'error') {
+  const bar = document.getElementById('fetch-error');
+  if (!message) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  bar.textContent = message;
+  bar.classList.toggle('warn', kind === 'warn');
+}
+
+async function refresh() {
+  try {
+    if (activeSource === 'excel') {
+      const org = await fetchExcelOrg();
+      showFetchError(org.headerIssue || null, 'warn');
+      renderOrg(org, 'excel');
+      renderReconciliation(org, 'excel');
+    } else {
+      const org = await fetchPdfOrg();
+      showFetchError(null);
+      renderOrg(
+        org || { label: moduleMeta.label, license: null, reports: [] },
+        'pdf'
+      );
+      renderReconciliation(org, 'pdf');
+    }
+  } catch (err) {
+    showFetchError(`Couldn't load data: ${err.message}`);
+  }
+}
+
+function setActiveSource(source) {
+  activeSource = source;
+  document.documentElement.dataset.mode = source;
+  document.getElementById('tab-pdf').classList.toggle('active', source === 'pdf');
+  document.getElementById('tab-excel').classList.toggle('active', source === 'excel');
+  document.getElementById('pdf-actions').hidden = source !== 'pdf';
+  document.getElementById('excel-actions').hidden = source !== 'excel';
+  document.getElementById('upload-status').hidden = true;
+  document.getElementById('reconcile-panel').hidden = true;
+  showFetchError(null);
+  selectedMonth = 'all';
+  refresh();
+}
+
+document.getElementById('tab-pdf').addEventListener('click', () => setActiveSource('pdf'));
+document.getElementById('tab-excel').addEventListener('click', () => setActiveSource('excel'));
 
 document.getElementById('rescan-btn').addEventListener('click', async () => {
   const btn = document.getElementById('rescan-btn');
@@ -704,6 +953,23 @@ document.getElementById('rescan-btn').addEventListener('click', async () => {
     btn.disabled = false;
     label.textContent = 'Rescan reports';
   }
+});
+
+document.getElementById('refresh-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('refresh-btn');
+  const label = btn.querySelector('span');
+  btn.disabled = true;
+  label.textContent = 'Refreshing…';
+  try {
+    await refresh();
+  } finally {
+    btn.disabled = false;
+    label.textContent = 'Refresh';
+  }
+});
+
+document.getElementById('download-btn').addEventListener('click', () => {
+  window.location.href = `/api/report?scope=${encodeURIComponent(moduleMeta.label)}`;
 });
 
 function showUploadStatus(kind, message) {
@@ -735,7 +1001,8 @@ async function uploadPdf(file) {
       throw new Error(body.error || `Upload failed (${res.status})`);
     }
     showUploadStatus('success', `${file.name} ingested successfully.`);
-    await refresh();
+    if (activeSource !== 'pdf') setActiveSource('pdf');
+    else await refresh();
   } catch (err) {
     showUploadStatus('error', `Failed to ingest ${file.name}: ${err.message}`);
   }
@@ -774,5 +1041,23 @@ window.addEventListener('drop', (e) => {
   files.forEach(uploadPdf);
 });
 
-refresh();
-setInterval(refresh, 15000);
+async function init() {
+  if (!MODULE_ID) {
+    document.getElementById('module-title').textContent = 'Unknown module';
+    showFetchError('No module specified. Go back to the report menu and pick a system.');
+    return;
+  }
+  try {
+    moduleMeta = await loadModuleMeta();
+  } catch (err) {
+    document.getElementById('module-title').textContent = 'Unknown module';
+    showFetchError(err.message);
+    return;
+  }
+  document.getElementById('module-title').textContent = moduleMeta.label;
+  document.getElementById('open-sheet-link').href = moduleMeta.sheetUrl;
+  setActiveSource('pdf');
+  setInterval(refresh, 15000);
+}
+
+init();

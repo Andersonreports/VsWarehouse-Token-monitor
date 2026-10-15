@@ -32,6 +32,15 @@ function upsertReport(report) {
   return saveHistory(history);
 }
 
+function deleteReport(filename) {
+  const history = loadHistory();
+  const idx = history.findIndex((r) => r.filename === filename);
+  if (idx < 0) return false;
+  history.splice(idx, 1);
+  saveHistory(history);
+  return true;
+}
+
 function loadOrgLabels() {
   if (!fs.existsSync(ORG_LABELS_FILE)) return {};
   try {
@@ -82,4 +91,14 @@ function groupByOrg(history) {
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-module.exports = { loadHistory, saveHistory, upsertReport, loadOrgLabels, groupByOrg, HISTORY_FILE };
+module.exports = {
+  loadHistory,
+  saveHistory,
+  upsertReport,
+  deleteReport,
+  loadOrgLabels,
+  loadOrgLicenses,
+  licenseInfo,
+  groupByOrg,
+  HISTORY_FILE,
+};
