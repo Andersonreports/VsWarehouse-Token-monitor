@@ -26,22 +26,18 @@
 
     <div class="header-tabs">
       <div class="org-tabs" id="source-tabs">
-        <button class="org-tab active" id="tab-pdf" data-source="pdf">PDF Report</button>
+        <button class="org-tab active" id="tab-csv" data-source="csv">CSV Report</button>
         <button class="org-tab" id="tab-excel" data-source="excel">Excel Report</button>
       </div>
     </div>
 
     <div class="header-actions">
-      <div id="pdf-actions" class="header-actions" hidden>
-        <button id="rescan-btn">
-          <svg viewBox="0 0 16 16" fill="none"><path d="M13.5 8a5.5 5.5 0 11-1.7-3.98M13.5 2.5v3h-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>Rescan reports</span>
-        </button>
+      <div id="csv-actions" class="header-actions" hidden>
         <button id="upload-btn" class="primary">
           <svg viewBox="0 0 16 16" fill="none"><path d="M8 10.5V3M8 3L5 6M8 3l3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 11v1.5A1.5 1.5 0 004.5 14h7a1.5 1.5 0 001.5-1.5V11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-          <span>Upload PDF</span>
+          <span>Upload CSV</span>
         </button>
-        <input type="file" id="upload-input" accept="application/pdf" hidden />
+        <input type="file" id="upload-input" accept=".csv,text/csv" hidden />
         <button id="download-btn">
           <svg viewBox="0 0 16 16" fill="none"><path d="M4 2.5h6l2.5 2.5v8.5H4v-11z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v4.5M8 10.5L6 8.5M8 10.5l2-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <span>Download Report</span>
@@ -247,7 +243,7 @@
 <div class="drop-overlay" id="drop-overlay" hidden>
   <div class="drop-card">
     <svg viewBox="0 0 24 24" fill="none"><path d="M12 15V4M12 4L7 9M12 4l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-    Drop PDF report to upload
+    Drop usage CSV to upload
   </div>
 </div>
 <script src="module.js"></script>

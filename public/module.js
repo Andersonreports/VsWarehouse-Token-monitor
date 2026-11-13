@@ -35,7 +35,7 @@ function cssVar(name) {
 }
 
 let moduleMeta = null;
-let activeSource = 'pdf';
+let activeSource = 'csv';
 let currentOrgData = null;
 let selectedMonth = 'all';
 
@@ -47,7 +47,7 @@ async function loadModuleMeta() {
   return mod;
 }
 
-async function fetchPdfOrg() {
+async function fetchCsvOrg() {
   const res = await fetch(`/api/orgs/${MODULE_ID}`);
   const body = await res.json();
   if (res.status === 404) return null;
@@ -96,7 +96,7 @@ function renderHistoryViews() {
     renderReportsTableSheet(filteredRows);
     renderUserTrend(filteredRows);
   } else {
-    renderReportsTablePdf(filtered);
+    renderReportsTableCsv(filtered);
   }
 }
 
@@ -714,49 +714,31 @@ function setReportsTableHead(mode, tokensTotal) {
       <th>Pending tokens (${fmtInt(tokensTotal)})</th>
     </tr>`;
   } else {
-    thead.innerHTML = `<tr><th>Report Date</th><th>File</th><th>Consumed</th><th>Total</th><th>Available</th><th>Usage</th><th></th></tr>`;
+    thead.innerHTML = `<tr><th>Date</th><th>Genome</th><th>Exome</th><th>Panel</th><th>Supporting</th><th>Samples</th><th>Consumed</th><th>Available</th></tr>`;
   }
 }
 
-function renderReportsTablePdf(history) {
+// One row per day from the usage CSV: the day's per-size sample counts plus the
+// running (cumulative) tokens consumed and available up to that day.
+function renderReportsTableCsv(history) {
   const tbody = document.querySelector('#reports-table tbody');
   tbody.innerHTML = '';
   const rows = [...history].sort((a, b) => new Date(b.reportDate) - new Date(a.reportDate));
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" style="color:var(--text-muted)">No reports ingested yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="color:var(--text-muted)">No CSV uploaded yet.</td></tr>';
     return;
   }
   for (const r of rows) {
+    const d = r.dailyCounts || {};
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${fmtDate(r.reportDate)}</td><td class="mono">${r.filename}</td><td>${fmtInt(
-      r.tokensConsumed
-    )}</td><td>${fmtInt(r.tokensTotal)}</td><td>${fmtInt(r.tokensAvailable)}</td><td>${fmtPct(
-      r.usagePercent
-    )}</td><td><button class="row-delete-btn" data-filename="${encodeURIComponent(
-      r.filename
-    )}" title="Remove this report">Remove</button></td>`;
+    tr.innerHTML = `<td>${fmtDate(r.reportDate)}</td><td>${fmtInt(d.GENOME || 0)}</td><td>${fmtInt(
+      d.EXOME || 0
+    )}</td><td>${fmtInt(d.PANEL || 0)}</td><td>${fmtInt(d.SUPPORTING || 0)}</td><td>${fmtInt(
+      d.TOTAL || 0
+    )}</td><td>${fmtInt(r.tokensConsumed)}</td><td>${fmtInt(r.tokensAvailable)}</td>`;
     tbody.appendChild(tr);
   }
 }
-
-document.querySelector('#reports-table tbody').addEventListener('click', async (e) => {
-  const btn = e.target.closest('.row-delete-btn');
-  if (!btn) return;
-  const filename = decodeURIComponent(btn.dataset.filename);
-  if (!confirm(`Remove "${filename}" from history?\n\nThis deletes the uploaded PDF and cannot be undone.`)) return;
-
-  btn.disabled = true;
-  try {
-    const res = await fetch(`/api/reports/${encodeURIComponent(filename)}`, { method: 'DELETE' });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || `Delete failed (${res.status})`);
-    showUploadStatus('success', `Removed ${filename}.`);
-    await refresh();
-  } catch (err) {
-    showUploadStatus('error', `Failed to remove ${filename}: ${err.message}`);
-    btn.disabled = false;
-  }
-});
 
 function renderReportsTableSheet(rawRows) {
   const tbody = document.querySelector('#reports-table tbody');
@@ -803,7 +785,7 @@ function showEmptyDashboard(message) {
   document.getElementById('day-legend').innerHTML = '';
   document.getElementById('day-sub').textContent = '';
   document.querySelector('#samples-table tbody').innerHTML = `<tr><td colspan="4" style="color:var(--text-muted)">${message}</td></tr>`;
-  const colspan = activeSource === 'excel' ? 11 : 7;
+  const colspan = activeSource === 'excel' ? 11 : 8;
   document.querySelector('#reports-table tbody').innerHTML = `<tr><td colspan="${colspan}" style="color:var(--text-muted)">${message}</td></tr>`;
   document.getElementById('month-filter').innerHTML = '<option value="all">All time</option>';
 }
@@ -812,6 +794,10 @@ function renderOrg(org, source) {
   currentOrgData = org;
   setReportsTableHead(source, org.reports[org.reports.length - 1]?.tokensTotal);
 
+  // The sample-hash table only makes sense for sheet/legacy data; the CSV meter
+  // is count-based, so its per-size counts live in the reports ledger instead.
+  document.getElementById('section-samples').hidden = source === 'csv';
+
   const sorted = org.reports;
   if (sorted.length === 0) {
     document.getElementById('org-name').textContent =
@@ -819,7 +805,7 @@ function renderOrg(org, source) {
     showEmptyDashboard(
       source === 'excel'
         ? 'No entries logged in the sheet yet.'
-        : 'No PDF reports ingested for this module yet.'
+        : 'No usage CSV uploaded for this module yet.'
     );
     return;
   }
@@ -911,13 +897,13 @@ async function refresh() {
       renderOrg(org, 'excel');
       renderReconciliation(org, 'excel');
     } else {
-      const org = await fetchPdfOrg();
+      const org = await fetchCsvOrg();
       showFetchError(null);
       renderOrg(
         org || { label: moduleMeta.label, license: null, reports: [] },
-        'pdf'
+        'csv'
       );
-      renderReconciliation(org, 'pdf');
+      renderReconciliation(org, 'csv');
     }
   } catch (err) {
     showFetchError(`Couldn't load data: ${err.message}`);
@@ -927,9 +913,9 @@ async function refresh() {
 function setActiveSource(source) {
   activeSource = source;
   document.documentElement.dataset.mode = source;
-  document.getElementById('tab-pdf').classList.toggle('active', source === 'pdf');
+  document.getElementById('tab-csv').classList.toggle('active', source === 'csv');
   document.getElementById('tab-excel').classList.toggle('active', source === 'excel');
-  document.getElementById('pdf-actions').hidden = source !== 'pdf';
+  document.getElementById('csv-actions').hidden = source !== 'csv';
   document.getElementById('excel-actions').hidden = source !== 'excel';
   document.getElementById('upload-status').hidden = true;
   document.getElementById('reconcile-panel').hidden = true;
@@ -938,22 +924,8 @@ function setActiveSource(source) {
   refresh();
 }
 
-document.getElementById('tab-pdf').addEventListener('click', () => setActiveSource('pdf'));
+document.getElementById('tab-csv').addEventListener('click', () => setActiveSource('csv'));
 document.getElementById('tab-excel').addEventListener('click', () => setActiveSource('excel'));
-
-document.getElementById('rescan-btn').addEventListener('click', async () => {
-  const btn = document.getElementById('rescan-btn');
-  const label = btn.querySelector('span');
-  btn.disabled = true;
-  label.textContent = 'Rescanning…';
-  try {
-    await fetch('/api/rescan', { method: 'POST' });
-    await refresh();
-  } finally {
-    btn.disabled = false;
-    label.textContent = 'Rescan reports';
-  }
-});
 
 document.getElementById('refresh-btn').addEventListener('click', async () => {
   const btn = document.getElementById('refresh-btn');
@@ -985,33 +957,36 @@ function showUploadStatus(kind, message) {
   }
 }
 
-async function uploadPdf(file) {
+async function uploadCsv(file) {
   if (!file) return;
-  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-    showUploadStatus('error', `"${file.name}" isn't a PDF file.`);
+  if (file.type !== 'text/csv' && !file.name.toLowerCase().endsWith('.csv')) {
+    showUploadStatus('error', `"${file.name}" isn't a CSV file.`);
     return;
   }
   showUploadStatus('info', `Uploading ${file.name}…`);
   const formData = new FormData();
   formData.append('file', file);
   try {
-    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    const res = await fetch(`/api/upload?m=${encodeURIComponent(MODULE_ID)}`, {
+      method: 'POST',
+      body: formData,
+    });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       throw new Error(body.error || `Upload failed (${res.status})`);
     }
-    showUploadStatus('success', `${file.name} ingested successfully.`);
-    if (activeSource !== 'pdf') setActiveSource('pdf');
+    showUploadStatus('success', `${file.name} loaded successfully.`);
+    if (activeSource !== 'csv') setActiveSource('csv');
     else await refresh();
   } catch (err) {
-    showUploadStatus('error', `Failed to ingest ${file.name}: ${err.message}`);
+    showUploadStatus('error', `Failed to load ${file.name}: ${err.message}`);
   }
 }
 
 const uploadInput = document.getElementById('upload-input');
 document.getElementById('upload-btn').addEventListener('click', () => uploadInput.click());
 uploadInput.addEventListener('change', () => {
-  if (uploadInput.files[0]) uploadPdf(uploadInput.files[0]);
+  if (uploadInput.files[0]) uploadCsv(uploadInput.files[0]);
   uploadInput.value = '';
 });
 
@@ -1038,7 +1013,7 @@ window.addEventListener('drop', (e) => {
   dragDepth = 0;
   dropOverlay.hidden = true;
   const files = [...(e.dataTransfer.files || [])];
-  files.forEach(uploadPdf);
+  files.forEach(uploadCsv);
 });
 
 async function init() {
@@ -1056,7 +1031,7 @@ async function init() {
   }
   document.getElementById('module-title').textContent = moduleMeta.label;
   document.getElementById('open-sheet-link').href = moduleMeta.sheetUrl;
-  setActiveSource('pdf');
+  setActiveSource('csv');
   setInterval(refresh, 15000);
 }
 
