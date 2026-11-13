@@ -650,7 +650,8 @@ function setReportsTableHead(mode, tokensTotal) {
   if (mode === 'excel') {
     thead.innerHTML = `<tr>
       <th>Date</th><th>Time</th><th>Server</th><th>Workspace</th><th>Panel</th>
-      <th>Total sample count</th><th>Total token consumed</th><th>Username</th><th>Uploaded by</th>
+      <th>Total sample scheduled</th><th>Total sample count</th><th>Total token consumed</th>
+      <th>Username</th><th>Uploaded by</th>
       <th>Pending tokens (${fmtInt(tokensTotal)})</th>
     </tr>`;
   } else {
@@ -686,7 +687,7 @@ function renderReportsTableSheet(rawRows) {
   const rows = [...rawRows].sort((a, b) => new Date(b.sortDate) - new Date(a.sortDate));
   if (rows.length === 0) {
     tbody.innerHTML =
-      '<tr><td colspan="10" style="color:var(--text-muted)">No entries logged yet.</td></tr>';
+      '<tr><td colspan="11" style="color:var(--text-muted)">No entries logged yet.</td></tr>';
     return;
   }
   const cell = (v) => (v == null || v === '' ? '—' : v);
@@ -695,10 +696,10 @@ function renderReportsTableSheet(rawRows) {
     tr.innerHTML = `<td>${cell(r.date)}</td><td>${cell(r.time)}</td><td>${cell(
       r.server
     )}</td><td>${cell(r.workspace)}</td><td>${cell(r.panel)}</td><td>${cell(
-      r.sampleCount
-    )}</td><td>${cell(r.tokensConsumed)}</td><td>${cell(r.username)}</td><td>${cell(
-      r.uploadedBy
-    )}</td><td>${cell(r.pending)}</td>`;
+      r.sampleScheduled
+    )}</td><td>${cell(r.sampleCount)}</td><td>${cell(r.tokensConsumed)}</td><td>${cell(
+      r.username
+    )}</td><td>${cell(r.uploadedBy)}</td><td>${cell(r.pending)}</td>`;
     tbody.appendChild(tr);
   }
 }
@@ -725,6 +726,7 @@ function showEmptyDashboard(message) {
   document.getElementById('day-sub').textContent = '';
   document.querySelector('#samples-table tbody').innerHTML = `<tr><td colspan="4" style="color:var(--text-muted)">${message}</td></tr>`;
   const colspan = activeSource === 'excel' ? 11 : 8;
+  // (excel sheet-log now has 11 columns)
   document.querySelector('#reports-table tbody').innerHTML = `<tr><td colspan="${colspan}" style="color:var(--text-muted)">${message}</td></tr>`;
   document.getElementById('month-filter').innerHTML = '<option value="all">All time</option>';
 }

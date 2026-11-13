@@ -282,6 +282,7 @@ function buildReportFromCsv(csvText, { orgName, fallbackTotal } = {}) {
         server: (r[idx.server] || '').trim(),
         workspace: (r[idx.workspace] || '').trim(),
         panel,
+        sampleScheduled: idx.sampleScheduled !== -1 ? (r[idx.sampleScheduled] || '').trim() : '',
         sampleCount: (r[idx.sampleCount] || '').trim(),
         tokensConsumed: (r[idx.tokenConsumed] || '').trim(),
         username,
