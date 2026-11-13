@@ -101,9 +101,12 @@ function findColumn(header, pattern) {
 }
 
 // If a header cell's label text gets accidentally cleared in the sheet, fall
-// back to the fixed column position the log has always used rather than
-// losing that whole field.
-const FIXED_POSITIONS = {
+// back to the fixed column position for that field. Two layouts exist:
+//   - "classic": ... Panel, Total sample count, Total token consumed, ...
+//   - "scheduled": inserts a "Total sample Scheduled" column before the count
+//     (so "Total sample calcualted for token" is the real count), shifting
+//     every later column one to the right.
+const FIXED_POSITIONS_CLASSIC = {
   sno: 0,
   date: 1,
   time: 2,
@@ -115,6 +118,20 @@ const FIXED_POSITIONS = {
   username: 8,
   uploadedBy: 9,
   pending: 10,
+};
+const FIXED_POSITIONS_SCHEDULED = {
+  sno: 0,
+  date: 1,
+  time: 2,
+  server: 3,
+  workspace: 4,
+  panel: 5,
+  sampleScheduled: 6,
+  sampleCount: 7,
+  tokenConsumed: 8,
+  username: 9,
+  uploadedBy: 10,
+  pending: 11,
 };
 
 async function fetchSheetCsv(sheetId) {
@@ -135,16 +152,28 @@ function buildReportFromCsv(csvText, { orgName, fallbackTotal } = {}) {
     server: findColumn(header, /^Server/i),
     workspace: findColumn(header, /^Workspace/i),
     panel: findColumn(header, /^Panel/i),
-    sampleCount: findColumn(header, /sample count/i),
+    sampleScheduled: findColumn(header, /sample\s*scheduled/i),
+    // "Total sample count" (classic) or "Total sample calcualted for token"
+    // (scheduled layout, sic) — both are the sample count tokens are based on.
+    sampleCount: findColumn(header, /sample count|sample\s*calc/i),
     tokenConsumed: findColumn(header, /token consumed/i),
     username: findColumn(header, /^Username/i),
     uploadedBy: findColumn(header, /uploaded by/i),
     pending: findColumn(header, /pending tokens/i),
   };
 
+  // Which physical layout is this sheet? Prefer stable, still-present anchors so
+  // detection survives a blanked label on the volatile count column.
+  const isScheduledLayout =
+    idx.sampleScheduled !== -1 ||
+    idx.pending === 11 ||
+    idx.tokenConsumed === 8 ||
+    /sample\s*calc/i.test(header[7] || '');
+  const FIXED_POSITIONS = isScheduledLayout ? FIXED_POSITIONS_SCHEDULED : FIXED_POSITIONS_CLASSIC;
+
   // A label cell blanked out in the sheet (e.g. someone typing over the
   // header row) shouldn't take down the whole column — fall back to the
-  // position that column has always been at.
+  // position that column has at this layout.
   let usedFallbackPosition = false;
   for (const [key, pos] of Object.entries(FIXED_POSITIONS)) {
     if (idx[key] === -1 && pos < header.length) {

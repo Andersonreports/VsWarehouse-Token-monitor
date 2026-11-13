@@ -617,6 +617,11 @@ function renderSamplesByDay(latest) {
   const band = innerW / data.length;
   const barW = Math.min(70, band * 0.5);
 
+  // Thin the date labels so they don't overlap when there are many days;
+  // every bar still renders, only some get a label (plus always the last).
+  const maxLabels = Math.max(1, Math.floor(innerW / 46));
+  const labelEvery = Math.max(1, Math.ceil(data.length / maxLabels));
+
   const ns = 'http://www.w3.org/2000/svg';
   const el = (tag, attrs) => {
     const n = document.createElementNS(ns, tag);
@@ -657,9 +662,17 @@ function renderSamplesByDay(latest) {
       yCursor = y;
     });
 
-    const label = el('text', { class: 'axis-label', x: cx, y: H - 6, 'text-anchor': 'middle' });
-    label.textContent = fmtDate(`${day}T00:00:00`, { month: 'short', day: 'numeric' });
-    svg.appendChild(label);
+    const isLast = i === data.length - 1;
+    if (i % labelEvery === 0 || isLast) {
+      const label = el('text', {
+        class: 'axis-label',
+        x: cx,
+        y: H - 6,
+        'text-anchor': i === 0 ? 'start' : isLast ? 'end' : 'middle',
+      });
+      label.textContent = fmtDate(`${day}T00:00:00`, { month: 'short', day: 'numeric' });
+      svg.appendChild(label);
+    }
 
     const hit = el('rect', {
       x: padL + band * i,
