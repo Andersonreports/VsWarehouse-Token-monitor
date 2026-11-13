@@ -8,6 +8,17 @@ const CAT_ORDER = [
   { key: 'SUPPORTING', label: 'Supporting', varName: '--series-4' },
 ];
 
+// Classify a sheet row by its Panel text for row colouring. Mirrors how the
+// meter categorises samples: blank panel = a supporting (Father/Mother/Normal)
+// row, genome/exome by name, everything else is a named panel ("other").
+function sheetRowCategory(panel) {
+  const p = (panel || '').toLowerCase();
+  if (p.includes('genome')) return 'genome';
+  if (p.includes('exome')) return 'exome';
+  if (p.includes('support') || p === '') return 'supporting';
+  return 'other';
+}
+
 const fmtInt = (n) => (n == null || n === '' ? '—' : n.toLocaleString ? n.toLocaleString('en-US') : n);
 const fmtPct = (n) => (n == null ? '—' : `${n}%`);
 
@@ -701,6 +712,7 @@ function renderReportsTableSheet(rawRows) {
   const cell = (v) => (v == null || v === '' ? '—' : v);
   for (const r of rows) {
     const tr = document.createElement('tr');
+    tr.className = `cat-${sheetRowCategory(r.panel)}`;
     tr.innerHTML = `<td>${cell(r.date)}</td><td>${cell(r.time)}</td><td>${cell(
       r.server
     )}</td><td>${cell(r.workspace)}</td><td>${cell(r.panel)}</td><td>${cell(

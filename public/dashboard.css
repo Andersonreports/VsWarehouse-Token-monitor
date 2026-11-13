@@ -327,6 +327,19 @@
     background: color-mix(in srgb, var(--accent) 10%, var(--surface));
   }
 
+  /* Colour the sheet-log rows by panel category (same palette as the charts):
+     genome / exome / supporting each get their series colour, every other
+     named panel shares one colour. Placed after the zebra rule so it wins. */
+  [data-mode="excel"] #reports-table tbody tr.cat-genome td { background: color-mix(in srgb, var(--series-1) 14%, var(--surface)); }
+  [data-mode="excel"] #reports-table tbody tr.cat-exome td { background: color-mix(in srgb, var(--series-2) 14%, var(--surface)); }
+  [data-mode="excel"] #reports-table tbody tr.cat-supporting td { background: color-mix(in srgb, var(--series-4) 14%, var(--surface)); }
+  [data-mode="excel"] #reports-table tbody tr.cat-other td { background: color-mix(in srgb, var(--series-3) 14%, var(--surface)); }
+  /* deeper tint on hover (extra :hover keeps specificity above the base rule) */
+  [data-mode="excel"] #reports-table tbody tr.cat-genome:hover td { background: color-mix(in srgb, var(--series-1) 26%, var(--surface)); }
+  [data-mode="excel"] #reports-table tbody tr.cat-exome:hover td { background: color-mix(in srgb, var(--series-2) 26%, var(--surface)); }
+  [data-mode="excel"] #reports-table tbody tr.cat-supporting:hover td { background: color-mix(in srgb, var(--series-4) 26%, var(--surface)); }
+  [data-mode="excel"] #reports-table tbody tr.cat-other:hover td { background: color-mix(in srgb, var(--series-3) 26%, var(--surface)); }
+
   @media (max-width: 900px) {
     .page { padding: 20px 18px 48px; }
   }
