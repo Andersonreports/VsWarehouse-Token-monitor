@@ -164,79 +164,6 @@ function renderLicenseStat(license) {
   expiryEl.textContent = fmtDate(license.expiryDate);
 }
 
-function renderLicenseValidity(license) {
-  if (!license) return '';
-  const expiry = new Date(license.expiryDate);
-  const daysLeft = Math.round((expiry - Date.now()) / 86400000);
-  const warn = daysLeft < 30;
-  return `
-    <div class="burn-metric ${warn ? 'warn' : 'good'}">
-      <div class="bm-label">Days remaining</div>
-      <div class="bm-value">~${Math.max(0, daysLeft).toLocaleString('en-US')}</div>
-    </div>
-    <div class="burn-metric ${warn ? 'warn' : 'good'}">
-      <div class="bm-label">License valid until</div>
-      <div class="bm-value">${fmtDate(license.expiryDate)}</div>
-    </div>
-  `;
-}
-
-function renderBurnRate(reports, license) {
-  const el = document.getElementById('burn-content');
-  const licenseHtml = renderLicenseValidity(license);
-
-  if (reports.length < 2) {
-    el.innerHTML = `<div class="burn-empty">
-      <span>Only one entry so far. Add another report/row and the burn rate, days remaining, and a projected exhaustion date will appear here automatically.</span>
-    </div>${licenseHtml ? `<div class="burn-grid">${licenseHtml}</div>` : ''}`;
-    return;
-  }
-
-  const prev = reports[reports.length - 2];
-  const latest = reports[reports.length - 1];
-  const deltaTokens = latest.tokensConsumed - prev.tokensConsumed;
-  const deltaDays = (new Date(latest.reportDate) - new Date(prev.reportDate)) / 86400000;
-
-  if (deltaDays <= 0) {
-    el.innerHTML = `<div class="burn-empty"><span>Entries must be at least a day apart to estimate a burn rate.</span></div>${
-      licenseHtml ? `<div class="burn-grid">${licenseHtml}</div>` : ''
-    }`;
-    return;
-  }
-
-  const rate = deltaTokens / deltaDays;
-
-  if (rate <= 0) {
-    el.innerHTML = `<div class="burn-empty">
-      <span>No net tokens consumed between ${fmtDate(prev.reportDate)} and ${fmtDate(
-      latest.reportDate
-    )} — usage is flat, so available tokens aren't projected to run out.</span>
-    </div>${licenseHtml ? `<div class="burn-grid">${licenseHtml}</div>` : ''}`;
-    return;
-  }
-
-  const availDelta = latest.tokensAvailable - prev.tokensAvailable;
-  const availArrow = availDelta > 0 ? '▲' : availDelta < 0 ? '▼' : '';
-  const availSign = availDelta > 0 ? '+' : '';
-
-  el.innerHTML = `
-    <div class="burn-grid">
-      <div class="burn-metric ${availDelta < 0 ? 'warn' : 'good'}">
-        <div class="bm-label">Since last entry</div>
-        <div class="bm-value">${availArrow} ${availSign}${fmtInt(availDelta)}</div>
-      </div>
-      <div class="burn-metric">
-        <div class="bm-label">Burn rate</div>
-        <div class="bm-value">${rate.toFixed(1)} / day</div>
-      </div>
-      ${licenseHtml}
-    </div>
-    <div class="burn-note">Based on ${fmtInt(deltaTokens)} tokens consumed over ${deltaDays.toFixed(
-    1
-  )} days, between the ${fmtDate(prev.reportDate)} and ${fmtDate(latest.reportDate)} entries.</div>
-  `;
-}
-
 function renderTrend(history) {
   const svg = document.getElementById('trend-svg');
   const tooltip = document.getElementById('trend-tooltip');
@@ -783,7 +710,6 @@ function showEmptyDashboard(message) {
   document.getElementById('stat-consumed-delta').textContent = '';
   document.getElementById('stat-available-sub').textContent = '';
   document.getElementById('stat-usage-sub').textContent = '';
-  document.getElementById('burn-content').innerHTML = `<div class="burn-empty"><span>${message}</span></div>`;
   document.getElementById('trend-svg').innerHTML = '';
   document.getElementById('trend-sub').textContent = message;
   document.getElementById('user-trend-svg').innerHTML = '';
@@ -829,7 +755,6 @@ function renderOrg(org, source) {
   renderHeader(latest, source);
   renderStats(latest, prev);
   renderLicenseStat(org.license);
-  renderBurnRate(sorted, org.license);
   renderCategories(latest);
   renderSamplesByDay(latest);
   renderSamples(latest);

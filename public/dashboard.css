@@ -283,8 +283,8 @@
      sheet log first, no side-by-side panels, no synthetic per-sample table. */
   .dashboard-sections { display: flex; flex-direction: column; }
   #section-reports-table { order: 4; }
-  #section-burn-trend { order: 1; }
-  #section-categories-days { order: 2; }
+  #section-categories-days { order: 1; }
+  #section-burn-trend { order: 2; }
   #section-samples { order: 3; }
 
   [data-mode="excel"] #section-reports-table { order: 1; }
@@ -292,15 +292,20 @@
   [data-mode="excel"] #section-burn-trend { order: 3; }
   [data-mode="excel"] #section-samples { display: none; }
 
-  /* pdf: burn-rate panel; excel: per-user trend chart replaces it */
+  /* csv: full-width trend only; excel: per-user trend chart alongside it */
   #panel-user-trend { display: none; }
   [data-mode="excel"] #panel-user-trend { display: block; }
-  [data-mode="excel"] #panel-burn-rate { display: none; }
 
   /* license stat tiles only make sense next to the excel tab's per-user chart.
      (compound selector so this reliably beats the later .stat-tile{display:flex} rule) */
   .stat-tile.excel-only { display: none; }
   [data-mode="excel"] .stat-tile.excel-only { display: flex; }
+
+  /* CSV tab: surface the license tiles in the top stat row, drop the burn
+     panel, and let the trend chart span the full width that frees up. */
+  [data-mode="csv"] .stat-tile.excel-only { display: flex; }
+  [data-mode="csv"] .stat-row { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  [data-mode="csv"] #section-burn-trend { grid-template-columns: 1fr; }
   .icon-days { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
   .icon-expiry { background: color-mix(in srgb, var(--status-good) 14%, transparent); color: var(--status-good); }
 
