@@ -239,7 +239,12 @@ function renderTrend(history) {
   }));
 
   if (pts.length > 1) {
-    const linePath = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
+    // Stepped (step-after): hold each day's cumulative level, then rise at the
+    // next day's x — a cleaner, more deliberate shape than a smooth diagonal.
+    let linePath = `M${pts[0].x},${pts[0].y}`;
+    for (let i = 1; i < pts.length; i++) {
+      linePath += ` L${pts[i].x},${pts[i - 1].y} L${pts[i].x},${pts[i].y}`;
+    }
     const areaPath = `${linePath} L${pts[pts.length - 1].x},${yFor(0)} L${pts[0].x},${yFor(0)} Z`;
     svg.appendChild(el('path', { class: 'trend-area', d: areaPath }));
     svg.appendChild(el('path', { class: 'trend-line', d: linePath }));
@@ -277,13 +282,16 @@ function renderTrend(history) {
     svg.appendChild(label);
   });
 
+  // With many days the per-point dots clutter the stepped area, so hide them
+  // by default and reveal one on hover; with few points keep them visible.
+  const restR = pts.length <= 24 ? 3.5 : 0;
   pts.forEach((p) => {
-    const dot = el('circle', { class: 'trend-dot', cx: p.x, cy: p.y, r: 4 });
+    const dot = el('circle', { class: 'trend-dot', cx: p.x, cy: p.y, r: restR });
     svg.appendChild(dot);
 
     const hit = el('circle', { cx: p.x, cy: p.y, r: 12, fill: 'transparent', style: 'cursor:pointer' });
     hit.addEventListener('mouseenter', () => {
-      dot.setAttribute('r', 6);
+      dot.setAttribute('r', 5.5);
       const wrapRect = svg.parentElement.getBoundingClientRect();
       const scaleX = wrapRect.width / W;
       const scaleY = wrapRect.height / H;
@@ -295,7 +303,7 @@ function renderTrend(history) {
       tooltip.style.opacity = '1';
     });
     hit.addEventListener('mouseleave', () => {
-      dot.setAttribute('r', 4);
+      dot.setAttribute('r', restR);
       tooltip.style.opacity = '0';
     });
     svg.appendChild(hit);
