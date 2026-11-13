@@ -971,11 +971,14 @@ async function uploadCsv(file) {
       method: 'POST',
       body: formData,
     });
+    const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
       throw new Error(body.error || `Upload failed (${res.status})`);
     }
-    showUploadStatus('success', `${file.name} loaded successfully.`);
+    const parts = [];
+    if (body.added != null) parts.push(`${body.added} new day${body.added === 1 ? '' : 's'} added`);
+    if (body.skipped) parts.push(`${body.skipped} duplicate${body.skipped === 1 ? '' : 's'} skipped`);
+    showUploadStatus('success', `${file.name} loaded${parts.length ? ` — ${parts.join(', ')}` : ''}.`);
     if (activeSource !== 'csv') setActiveSource('csv');
     else await refresh();
   } catch (err) {

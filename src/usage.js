@@ -39,6 +39,67 @@ function saveModuleCsv(moduleId, buffer) {
   fs.writeFileSync(csvPath(moduleId), buffer);
 }
 
+// Canonical header we re-serialise the merged store with. The parser matches
+// columns by keyword, so these plain names round-trip cleanly.
+const CANON_HEADER = 'Date,Genome,Exome,Panel,Supporting';
+
+function serializeDays(days) {
+  const lines = [CANON_HEADER];
+  for (const d of days) {
+    lines.push(
+      [d.date, d.counts.GENOME || 0, d.counts.EXOME || 0, d.counts.PANEL || 0, d.counts.SUPPORTING || 0].join(',')
+    );
+  }
+  return lines.join('\n') + '\n';
+}
+
+function loadStoredDays(moduleId) {
+  if (!hasModuleCsv(moduleId)) return [];
+  try {
+    return parseUsageCsv(fs.readFileSync(csvPath(moduleId), 'utf8')).days;
+  } catch {
+    return [];
+  }
+}
+
+// Merge incoming day rows into what's already stored, keyed by date. A date
+// that already exists (or repeats within the new file) is skipped, not added
+// again, so re-uploading an overlapping CSV never double-counts a day.
+function mergeDays(existing, incoming) {
+  const seen = new Set(existing.map((d) => d.date));
+  const merged = [...existing];
+  let added = 0;
+  let skipped = 0;
+  for (const d of incoming) {
+    if (seen.has(d.date)) {
+      skipped++;
+      continue;
+    }
+    seen.add(d.date);
+    merged.push(d);
+    added++;
+  }
+  merged.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return { merged, added, skipped };
+}
+
+/**
+ * Ingest an uploaded CSV for a module: parse it, merge its day rows into the
+ * stored accumulation (skipping dates already present), and persist the result.
+ * @returns {{added:number, skipped:number, incomingDays:number, totalDays:number}}
+ */
+function ingestCsv(moduleId, text) {
+  const { days } = parseUsageCsv(text); // throws on a non-usage CSV
+  if (days.length === 0) {
+    return { added: 0, skipped: 0, incomingDays: 0, totalDays: loadStoredDays(moduleId).length };
+  }
+  const existing = loadStoredDays(moduleId);
+  const { merged, added, skipped } = mergeDays(existing, days);
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(csvPath(moduleId), serializeDays(merged));
+  return { added, skipped, incomingDays: days.length, totalDays: merged.length };
+}
+
 // Minimal RFC-4180-ish parser: handles quoted fields and \r\n, drops blank rows.
 function parseCsv(text) {
   const rows = [];
@@ -222,6 +283,8 @@ module.exports = {
   buildOrg,
   hasModuleCsv,
   saveModuleCsv,
+  ingestCsv,
+  mergeDays,
   csvPath,
   DEFAULT_RATES,
 };

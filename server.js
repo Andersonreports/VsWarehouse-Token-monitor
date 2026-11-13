@@ -15,7 +15,7 @@ function lanAddresses() {
   return addrs;
 }
 
-const { buildOrg, saveModuleCsv, parseUsageCsv } = require('./src/usage');
+const { buildOrg, ingestCsv } = require('./src/usage');
 const { streamReportPdf } = require('./src/generateReport');
 const { getSheetReports } = require('./src/parseSheet');
 const { reconcile } = require('./src/reconcile');
@@ -121,18 +121,21 @@ app.post('/api/upload', (req, res) => {
     if (!mod) return res.status(400).json({ error: 'Unknown or missing module (?m=...).' });
 
     const text = req.file.buffer.toString('utf8');
+    let summary;
     try {
-      const parsed = parseUsageCsv(text);
-      if (!parsed.days.length) {
-        return res.status(400).json({ error: 'No dated rows found in the CSV.' });
-      }
+      summary = ingestCsv(moduleId, text);
     } catch (e) {
       return res.status(400).json({ error: `Could not read CSV: ${e.message}` });
     }
+    if (summary.incomingDays === 0) {
+      return res.status(400).json({ error: 'No dated rows found in the CSV.' });
+    }
 
-    saveModuleCsv(moduleId, req.file.buffer);
-    console.log(`Ingested CSV for ${mod.label} (${req.file.originalname})`);
-    res.json(sanitizeOrg(buildOrg(moduleId, mod)));
+    console.log(
+      `Ingested CSV for ${mod.label} (${req.file.originalname}): ` +
+        `${summary.added} new day(s), ${summary.skipped} duplicate(s) skipped`
+    );
+    res.json({ ...sanitizeOrg(buildOrg(moduleId, mod)), added: summary.added, skipped: summary.skipped });
   });
 });
 
