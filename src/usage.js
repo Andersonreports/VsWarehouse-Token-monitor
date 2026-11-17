@@ -62,42 +62,55 @@ function loadStoredDays(moduleId) {
   }
 }
 
-// Merge incoming day rows into what's already stored, keyed by date. A date
-// that already exists (or repeats within the new file) is skipped, not added
-// again, so re-uploading an overlapping CSV never double-counts a day.
+function sameCounts(a, b) {
+  return CATS.every((k) => (a.counts[k] || 0) === (b.counts[k] || 0));
+}
+
+// Merge incoming day rows into what's already stored, keyed by date (upsert).
+// A new date is added; a date already present has its counts OVERWRITTEN with
+// the incoming values (the latest export wins, so a corrected day takes
+// effect); an incoming row identical to what's stored is left unchanged. We
+// replace rather than add, so re-uploading an overlapping CSV still never
+// double-counts a day.
 function mergeDays(existing, incoming) {
-  const seen = new Set(existing.map((d) => d.date));
-  const merged = [...existing];
+  const byDate = new Map(existing.map((d) => [d.date, d]));
   let added = 0;
-  let skipped = 0;
+  let updated = 0;
+  let unchanged = 0;
   for (const d of incoming) {
-    if (seen.has(d.date)) {
-      skipped++;
+    const prev = byDate.get(d.date);
+    if (!prev) {
+      added++;
+    } else if (sameCounts(prev, d)) {
+      unchanged++;
       continue;
+    } else {
+      updated++;
     }
-    seen.add(d.date);
-    merged.push(d);
-    added++;
+    byDate.set(d.date, d);
   }
-  merged.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  return { merged, added, skipped };
+  const merged = [...byDate.values()].sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+  );
+  return { merged, added, updated, unchanged };
 }
 
 /**
- * Ingest an uploaded CSV for a module: parse it, merge its day rows into the
- * stored accumulation (skipping dates already present), and persist the result.
- * @returns {{added:number, skipped:number, incomingDays:number, totalDays:number}}
+ * Ingest an uploaded CSV for a module: parse it, upsert its day rows into the
+ * stored accumulation (new dates added, existing dates overwritten with the
+ * incoming counts, identical rows left as-is), and persist the result.
+ * @returns {{added:number, updated:number, unchanged:number, incomingDays:number, totalDays:number}}
  */
 function ingestCsv(moduleId, text) {
   const { days } = parseUsageCsv(text); // throws on a non-usage CSV
   if (days.length === 0) {
-    return { added: 0, skipped: 0, incomingDays: 0, totalDays: loadStoredDays(moduleId).length };
+    return { added: 0, updated: 0, unchanged: 0, incomingDays: 0, totalDays: loadStoredDays(moduleId).length };
   }
   const existing = loadStoredDays(moduleId);
-  const { merged, added, skipped } = mergeDays(existing, days);
+  const { merged, added, updated, unchanged } = mergeDays(existing, days);
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(csvPath(moduleId), serializeDays(merged));
-  return { added, skipped, incomingDays: days.length, totalDays: merged.length };
+  return { added, updated, unchanged, incomingDays: days.length, totalDays: merged.length };
 }
 
 // Minimal RFC-4180-ish parser: handles quoted fields and \r\n, drops blank rows.

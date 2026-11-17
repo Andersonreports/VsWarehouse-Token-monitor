@@ -935,10 +935,21 @@ async function uploadCsv(file) {
     if (!res.ok) {
       throw new Error(body.error || `Upload failed (${res.status})`);
     }
-    const parts = [];
-    if (body.added != null) parts.push(`${body.added} new day${body.added === 1 ? '' : 's'} added`);
-    if (body.skipped) parts.push(`${body.skipped} duplicate${body.skipped === 1 ? '' : 's'} skipped`);
-    showUploadStatus('success', `${file.name} loaded${parts.length ? ` — ${parts.join(', ')}` : ''}.`);
+    const added = body.added || 0;
+    const updated = body.updated || 0;
+    const unchanged = body.unchanged || 0;
+    const day = (n) => `${n} day${n === 1 ? '' : 's'}`;
+    if (added === 0 && updated === 0) {
+      // Every incoming row already matched what's stored — a genuine no-op.
+      // Flag it plainly so it doesn't read as "nothing happened / it failed".
+      showUploadStatus('warn', `${file.name}: nothing changed — all ${day(unchanged)} already match what's stored.`);
+    } else {
+      const parts = [];
+      if (added) parts.push(`${day(added)} added`);
+      if (updated) parts.push(`${day(updated)} updated`);
+      if (unchanged) parts.push(`${day(unchanged)} unchanged`);
+      showUploadStatus('success', `${file.name} loaded — ${parts.join(', ')}.`);
+    }
     if (activeSource !== 'csv') setActiveSource('csv');
     else await refresh();
   } catch (err) {

@@ -21,6 +21,7 @@
 
     --status-good: #0ca30c;
     --status-critical: #d03b3b;
+    --status-warn: #b26a00;
 
     --accent: var(--series-1);
   }
@@ -222,6 +223,7 @@
   .upload-status.info { background: color-mix(in srgb, var(--series-1) 10%, transparent); color: var(--series-1); }
   .upload-status.success { background: color-mix(in srgb, var(--status-good) 12%, transparent); color: var(--status-good); }
   .upload-status.error { background: color-mix(in srgb, var(--status-critical) 12%, transparent); color: var(--status-critical); }
+  .upload-status.warn { background: color-mix(in srgb, var(--status-warn) 14%, transparent); color: var(--status-warn); }
 
   .drop-overlay {
     position: fixed;

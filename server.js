@@ -133,9 +133,14 @@ app.post('/api/upload', (req, res) => {
 
     console.log(
       `Ingested CSV for ${mod.label} (${req.file.originalname}): ` +
-        `${summary.added} new day(s), ${summary.skipped} duplicate(s) skipped`
+        `${summary.added} new day(s), ${summary.updated} updated, ${summary.unchanged} unchanged`
     );
-    res.json({ ...sanitizeOrg(buildOrg(moduleId, mod)), added: summary.added, skipped: summary.skipped });
+    res.json({
+      ...sanitizeOrg(buildOrg(moduleId, mod)),
+      added: summary.added,
+      updated: summary.updated,
+      unchanged: summary.unchanged,
+    });
   });
 });
 
